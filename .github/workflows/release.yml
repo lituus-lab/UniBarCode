@@ -16,7 +16,7 @@ jobs:
     name: Tag matches .nimble version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       # A tag disagreeing with the package version ships artifacts whose
       # embedded version lies. Refuse before anything is built.
@@ -36,7 +36,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: jiro4989/setup-nim-action@v2
         with:
@@ -69,7 +69,7 @@ jobs:
           cp libUniBarCode.* "$dir/"
           cp LICENSE NOTICE "$dir/"
           tar czf "$dir.tar.gz" "$dir"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cabi-${{ matrix.os }}
           path: '*.tar.gz'
@@ -83,7 +83,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: jiro4989/setup-nim-action@v2
         with:
@@ -98,7 +98,7 @@ jobs:
           [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
           nim c --hints:off -o:$GATE tools/gate.nim
           echo "GATE=$GATE" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - run: pip install -U setuptools wheel Cython
@@ -116,7 +116,7 @@ jobs:
             macOS)   pip install delocate   && delocate-wheel py/dist/*.whl -w dist/ ;;
             Windows) pip install delvewheel && delvewheel repair py/dist/*.whl -w dist/ ;;
           esac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
@@ -128,11 +128,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - run: ls -R artifacts
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**/*
           generate_release_notes: true
