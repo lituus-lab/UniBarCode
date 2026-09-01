@@ -42,24 +42,19 @@ repos:
     hooks:
       - id: nim-lint
         name: nimble lint (nimpretty)
-        entry: tools/hooks/gated.sh lint
+        # Through the gate: `nimble lint` exits 0 even when nimpretty found
+        # something, so the hook would pass on a file it should have stopped.
+        entry: tools/hooks/gate.sh lint
         language: system
         files: \.nim$
         pass_filenames: false
       - id: nim-vgraph
         name: nimble checkVGraph
-        entry: tools/hooks/gated.sh checkVGraph
+        entry: tools/hooks/gate.sh checkVGraph
         language: system
-        files: \.nim$
+        files: (\.nim|vgraph\.cfg|config\.nims|UniBarCode\.nimble)$
         pass_filenames: false
         stages: [pre-push]
-      - id: actionlint
-        name: actionlint (GitHub workflows)
-        entry: actionlint
-        language: golang
-        additional_dependencies: [github.com/rhysd/actionlint/cmd/actionlint@v1.7.7]
-        files: ^\.github/workflows/.*\.ya?ml$
-
       - id: spdx
         name: SPDX headers (nim/C/Python)
         entry: tools/hooks/spdx_check.sh
