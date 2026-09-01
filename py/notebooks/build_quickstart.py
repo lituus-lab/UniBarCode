@@ -33,38 +33,42 @@ an output below that stops matching fails the build."""),
     ("code", """import unibarcode
 
 unibarcode.version(), unibarcode.__version__"""),
-    ("md", "`fibonacci` is the template's hello-world, iterative and O(n)."),
-    ("code", "[unibarcode.fibonacci(n) for n in range(11)]"),
-    ("md", """## The domain is part of the contract
+    ("md", "Encode a payload by symbology name (or ordinal). The result carries module dimensions and render methods."),
+    ("code", """bc = unibarcode.encode("ean13", "978020137962")
+bc.is_ok, bc.width, bc.height, bc.is_2d"""),
+    ("md", "2-D symbologies produce a grid."),
+    ("code", """qr = unibarcode.encode("qr", "Hello")
+qr.is_2d, qr.width, qr.height"""),
+    ("md", """## Validation
 
-`fibonacci` is defined on `[0, 92]` — 92 being the largest argument whose result
-still fits in a signed 64-bit integer. The bound is not advisory."""),
-    ("code", "unibarcode.fibonacci(92)"),
-    ("md", """Past it the binding raises, rather than returning a silently wrong
-number. This is the contract the Nim library states as a precondition; each
-surface expresses it in the terms its own callers expect."""),
+A bad payload returns a result with `is_ok == False` and an error message,
+rather than raising — the caller decides how to handle it."""),
+    ("code", """bad = unibarcode.encode("ean13", "abc")
+bad.is_ok, bad.error"""),
+    ("md", "An unknown symbology raises immediately."),
     ("code", """try:
-    unibarcode.fibonacci(93)
+    unibarcode.encode("nope", "x")
 except ValueError as exc:
     print("ValueError:", exc)"""),
-    ("code", """try:
-    unibarcode.fibonacci(-1)
-except ValueError as exc:
-    print("ValueError:", exc)"""),
-    ("md", "A non-integer argument is a type error, not a coercion."),
-    ("code", """try:
-    unibarcode.fibonacci(10.0)
-except TypeError as exc:
-    print("TypeError:", exc)"""),
+    ("md", """## Render
+
+`render_png` and `render_svg` both return bytes -- the SVG is a standalone document, not a `str`. Options control module size, bar height, colors, and the HRI text strip."""),
+    ("code", """png = bc.render_png()
+png[:4]"""),
+    ("code", """opts = unibarcode.Options().module_size(3).bar_height(120).show_hri(False)
+svg = bc.render_svg(opts)
+svg[:20]"""),
+    ("md", "Colors parse any CSS Color 4 string."),
+    ("code", """opts = unibarcode.Options().foreground(unibarcode.Color.parse("#3366cc"))
+bc.render_png(opts)[:4]"""),
     ("md", """## The C ABI underneath
 
-The same entry points are reachable from anything that speaks C. There the
-contract is expressed by clamping instead of raising — an exception must never
-unwind across an ABI boundary:
+The same entry points are reachable from anything that speaks C. No exception
+ever unwinds across the ABI boundary — failures map to `UBC_*` status codes:
 
 ```c
-unibarcode_fibonacci(-5);   /* 0       — clamped */
-unibarcode_fibonacci(200);  /* fib(92) — clamped */
+ubc_barcode *h = ubc_encode(UBC_SBC_EAN13, "978020137962");
+ubc_render_png(h, NULL, &out, &len);   /* UBC_OK */
 ```
 
 See `include/UniBarCode.h`, and the book for the full picture."""),
@@ -87,7 +91,7 @@ def main():
     # package, and the notebook would stop testing what it claims to test.
     NotebookClient(nb, timeout=120, kernel_name="python3",
                    resources={"metadata": {"path": ROOT}}).execute()
-    with open(OUT, "w") as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         nbf.write(nb, f)
     print(f"wrote {OUT}")
 
