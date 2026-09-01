@@ -4,7 +4,7 @@
 ## no module imports a higher layer, no `requires` names an undeclared engine.
 ## Line-based scan of import/from/include, which covers the forms Nim sources
 ## actually use; a macro-built import would slip past it.
-import std/[os, strformat, strutils, tables]
+import std/[os, strformat, strutils]
 
 const
   Cfg = "vgraph.cfg"
@@ -30,8 +30,57 @@ proc layerOf(path: string, order: seq[string]): int =
         return i
   -1
 
+proc layerOfModule(modulePath: string, order: seq[string]): int =
+  ## Index of the layer owning an imported module path, or -1. Matches a layer
+  ## name against any path component, so `UniBarCode/spaces/oklab` resolves to
+  ## the `spaces` layer and a bare `c_api` to the `c_api` layer.
+  let parts = modulePath.split({'/', '\\'})
+  for i, name in order:
+    for part in parts:
+      if part == name or part == name & ".nim":
+        return i
+  -1
+
+proc splitCommas(s: string): seq[string] =
+  ## Split on commas at bracket depth 0, so `std/[os, strutils]` stays one
+  ## token while `a, b` splits in two.
+  var depth = 0
+  var cur = ""
+  for ch in s:
+    if ch == '[': inc depth; cur.add(ch)
+    elif ch == ']': dec depth; cur.add(ch)
+    elif ch == ',' and depth == 0:
+      if cur.strip.len > 0: result.add(cur)
+      cur = ""
+    else: cur.add(ch)
+  if cur.strip.len > 0: result.add(cur)
+
+proc expandBrackets(token: string): seq[string] =
+  ## Expand a bracketed import group preserving the directory prefix:
+  ## `UniBarCode/common/[types, digits]` -> `UniBarCode/common/types`,
+  ## `UniBarCode/common/digits`. Depth-aware so nested brackets survive.
+  let bi = token.find('[')
+  if bi < 0:
+    result.add(token.strip)
+    return
+  let prefix = token[0 ..< bi].strip
+  var depth = 1
+  var j = bi + 1
+  var inner = ""
+  while j < token.len and depth > 0:
+    if token[j] == '[': inc depth; inner.add(token[j])
+    elif token[j] == ']': dec depth
+    else: inner.add(token[j])
+    inc j
+  for sub in splitCommas(inner):
+    let m = sub.strip
+    if m.len == 0: continue
+    for expanded in expandBrackets(prefix & m):
+      result.add(expanded)
+
 iterator importedModules(path: string): string =
-  ## Last path component of every module the file pulls in.
+  ## Full slash-separated path of every module the file pulls in. Directory
+  ## components are preserved so a directory layer (`spaces`) can be resolved.
   for raw in readFile(path).splitLines:
     let line = raw.split('#')[0].strip
     var body = ""
@@ -39,12 +88,12 @@ iterator importedModules(path: string): string =
     elif line.startsWith("include "): body = line[8 .. ^1]
     elif line.startsWith("from "): body = line[5 .. ^1].split(" import ")[0]
     else: continue
-    # `std/[os, strutils]` -> the bracket members carry the meaningful names.
-    body = body.multiReplace(("[", ","), ("]", ","))
-    for item in body.split(','):
-      let module = item.strip.split({'/', '\\'})[^1].strip
-      if module.len > 0:
-        yield module
+    # `std/[os, strutils]` -> `std/os`, `std/strutils` (prefix preserved);
+    # top-level commas separate independent modules.
+    for token in splitCommas(body):
+      for module in expandBrackets(token):
+        if module.len > 0:
+          yield module
 
 proc packageName(spec: string): string =
   ## `nim >= 2.0.0` -> nim; `https://host/user/NimContracts#branch` -> NimContracts.
@@ -69,9 +118,6 @@ proc main() =
   if not fileExists(Cfg):
     quit(&"vgraph: {Cfg} not found", 1)
   let order = section("layers")
-  var index = initTable[string, int]()
-  for i, name in order:
-    index[name] = i
 
   var violations: seq[string]
 
@@ -82,7 +128,7 @@ proc main() =
     if own < 0: continue
     inc checked
     for module in importedModules(path):
-      let other = index.getOrDefault(module, -1)
+      let other = layerOfModule(module, order)
       if other > own:
         violations.add &"{path}: imports {module} ({order[other]}) from {order[own]}"
 

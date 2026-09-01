@@ -7,37 +7,410 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: no job in this workflow pushes to git, so the default token
+# never needs write scope. The pages job widens its own below.
 permissions:
   contents: read
 
-# A newer push makes the previous run's answer irrelevant: cancel it rather
-# than pay for both.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+defaults:
+  run:
+    # bash on every runner, Windows included: one spelling for the gate call,
+    # whose executable is named differently there.
+    shell: bash
 
 jobs:
-  ci:
-    # The CI every Uni* engine runs, held once in lituus-lab/.github rather
-    # than copied per repo. Pinned by commit: a moving ref here would be the
-    # same unpinned dependency the family forbids everywhere else.
-    uses: lituus-lab/.github/.github/workflows/uni-nim-library.yml@64f19340a5f85da0f57a907e278485c8b25fad80
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Every commit must carry a Signed-off-by trailer
+        run: |
+          set -e
+          range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          bad=0
+          for c in $(git rev-list --no-merges "$range"); do
+            if ! git log -1 --format='%B' "$c" | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "Missing Signed-off-by on commit $c"
+              git log -1 --oneline "$c"
+              bad=1
+            fi
+          done
+          exit $bad
+
+  spdx:
+    name: SPDX headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      # Mirrors tools/hooks/spdx_check.sh: every tracked Nim/C/Python source must
+      # carry an SPDX-License-Identifier header in its first 5 lines.
+      - name: Every Nim/C/Python source carries an SPDX header
+        run: bash tools/hooks/spdx_check.sh
+
+  test:
+    name: Nim (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - run: $GATE testCi
+      - run: $GATE testCiRelease
+
+  cabi:
+    name: C ABI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      # gcc arrives with Nim's MinGW, GNU make does not ship on the runner image.
+      - name: Install GNU make (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress
+      - run: $GATE ctest
+      # The C demo is part of the documented surface; nothing else builds it.
+      - run: $GATE cexample
+      - name: Upload Library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libUniBarCode-${{ matrix.os }}
+          # The header ships with the lib: a C ABI artifact without it is not
+          # consumable. Paths stay repo-relative so the zip keeps include/ intact.
+          path: |
+            include/UniBarCode.h
+            libUniBarCode.so
+            libUniBarCode.dll
+            libUniBarCode.dylib
+            libUniBarCode.a
+            libUniBarCode.lib
+  python:
+    name: Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -U setuptools wheel Cython pytest
+      # CPython is MSVC-built here, so the lib it links must be too: put cl.exe on
+      # PATH for `nimble pyLib`, which routes to clibMsvc on Windows.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - run: $GATE pyLib
+      - run: cd py && python3 setup.py build_ext --inplace
+      - run: cd py && python3 -m pytest -q
+      - run: cd py && python3 setup.py bdist_wheel
+      - name: Repair Wheel (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          pip install auditwheel
+          auditwheel repair py/dist/*.whl -w py/dist/repaired/
+      - name: Repair Wheel (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          pip install delocate
+          delocate-wheel py/dist/*.whl -w py/dist/repaired/
+      - name: Repair Wheel (Windows)
+        if: matrix.os == 'windows-latest'
+        # bash, not the default PowerShell: pwsh does not expand
+        # py/dist/*.whl, so delvewheel would receive the pattern itself.
+        shell: bash
+        run: |
+          pip install delvewheel
+          delvewheel repair py/dist/*.whl -w py/dist/repaired/
+      - name: Upload Python Wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: unibarcode-wheel-${{ matrix.os }}
+          path: py/dist/repaired/*.whl
+
+  consume-cabi:
+    name: Consume C artifact (${{ matrix.os }})
+    needs: cabi
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # No setup-nim-action on purpose: proves the published header and lib work
+      # on a machine without Nim, using only the test source from the checkout.
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with:
+          name: libUniBarCode-${{ matrix.os }}
+          path: artifact
+      # On Windows the runner has no gcc on PATH by default and this job
+      # deliberately skips setup-nim-action (it proves the artifact works
+      # without Nim). Bring up MSYS2 MinGW gcc + zlib so -lz resolves.
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-zlib
+      - name: Put MinGW on PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" >> "$GITHUB_PATH"
+      - name: Compile and run a consumer against the artifact
+        shell: bash
+        run: |
+          set -eu
+          # Assert the shipped layout first: a missing piece names itself here,
+          # rather than surfacing as an obscure compiler error.
+          test -f artifact/include/UniBarCode.h
+          test -f artifact/libUniBarCode.a
+          CC=cc; BIN=consumer
+          if [ "$RUNNER_OS" = Windows ]; then CC=gcc; BIN=consumer.exe; fi
+          "$CC" -Iartifact/include -O2 -Wall -Wextra -std=c11 -o "$BIN" \
+            tests/c/test_unibarcode.c artifact/libUniBarCode.a -lz
+          "./$BIN"
+
+  consume-wheel:
+    name: Consume wheel (${{ matrix.os }})
+    needs: python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Neither Nim nor libUniBarCode exists here: whatever the extension needs
+      # at runtime must have travelled inside the wheel.
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: unibarcode-wheel-${{ matrix.os }}
+          path: dist
+      - name: Install the wheel and test the installed package
+        shell: bash
+        run: |
+          set -eu
+          python -m pip install -U pip pytest
+          # --only-binary rules out a silent fallback to building from source.
+          python -m pip install --only-binary :all: dist/*.whl
+          # Run outside the checkout so `import unibarcode` can only resolve to
+          # the installed wheel, never to py/unibarcode next door.
+          work="$RUNNER_TEMP/wheel-check"
+          mkdir -p "$work"
+          cp py/tests/test_unibarcode.py "$work/"
+          cd "$work"
+          python -m pytest -q
+      - name: Execute the quickstart notebook against the installed wheel
+        shell: bash
+        run: |
+          set -eu
+          python -m pip install nbconvert ipykernel
+          # Same neutral directory, same reason. GitHub renders the committed
+          # outputs, so executing them here keeps the notebook honest.
+          work="$RUNNER_TEMP/wheel-check"
+          cp py/notebooks/quickstart.ipynb "$work/"
+          cd "$work"
+          jupyter nbconvert --execute --to notebook --stdout quickstart.ipynb > /dev/null
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      # checkVGraph compiles tools/vgraph.nim, which imports contracts -- the
+      # deps must be resolved before either task runs.
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only: nothing is resolved yet.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - run: $GATE lint
+      - run: $GATE checkVGraph
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      # nimib pulls in `markdown`, which imports std/re and dlopens PCRE at
+      # startup. ubuntu-latest stopped shipping it, so nbook died with
+      # `could not load: libpcre.so(.3|.1|)` before running a single chapter.
+      - run: sudo apt-get update && sudo apt-get install -y libpcre3
+      - run: $GATE docsDeps
+      # nimib runs the book's code against this build: a stale book fails here.
+      - run: $GATE docs
+      - name: Upload Docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: pages/
+
+  pages:
+    name: Publish Pages
+    needs: docs
+    # Pages serves private repos only on a paid plan, and UniBarCode is private.
+    # Skipped here; switches itself on in the public engines cloned from it.
+    if: ${{ !github.event.repository.private && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
     permissions:
-      # A called workflow cannot obtain more than the calling job grants.
-      contents: read
       pages: write
       id-token: write
-    with:
-      library: UniBarCode
-      module: unibarcode
-      python-smoke-test: py/tests/test_fibonacci.py
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs
+          path: pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  coverage:
+    name: Coverage
+    # Linux only: Apple's gcov is a clang stub emitting no .gcda, so the report
+    # would come out empty on macOS. No lcov version pin needed — the task
+    # suppresses no error, so 1.x and 2.x agree.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: sudo apt-get update && sudo apt-get install -y lcov
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed, so every
+          # task below runs through the gate, which reads the task's own
+          # success marker instead. Built from std only.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - run: $GATE coverage
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: |
+            coverage/
+            lcov.info
+
+  canary:
+    name: Canary (the gate must fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+      - run: nimble install -y
+      - name: Build the failure gate
+        run: nim c --hints:off -o:build/unigate tools/gate.nim
+      - name: A broken build must come back non-zero
+        run: |
+          # `nimble canary` compiles a source that cannot compile. Nimble
+          # reports success for it; the gate is the only thing that does not.
+          if ./build/unigate canary; then
+            echo "canary: the gate let a broken build through" >&2
+            exit 1
+          fi
+          echo "canary: the gate rejected a broken build, as it must"
 
   all-green:
     name: All green
     # The one check branch protection requires, and the only name that has to
-    # stay stable. `needs.ci.result` is the whole called workflow's verdict; a
-    # repo with jobs of its own adds them here beside it.
-    needs: [ci]
+    # stay stable. `skipped` passes: `dco` runs on pull requests only, and
+    # `pages` only on main.
+    needs: [dco, spdx, test, cabi, python, consume-cabi, consume-wheel, lint, docs, pages, coverage, canary]
     if: always()
     runs-on: ubuntu-latest
     steps:

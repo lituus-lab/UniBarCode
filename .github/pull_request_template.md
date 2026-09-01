@@ -18,7 +18,7 @@ without a compatible license/attribution, and can stand behind it.
 - [ ] Every commit carries `Signed-off-by:` (`git commit -s`) — the DCO job blocks otherwise
 - [ ] Commits and this PR title follow Conventional Commits — the `commitizen` job blocks otherwise
 - [ ] Commits are atomic (one logical change each; several per PR is fine, but not one monolithic commit)
-- [ ] `build/unigate testAll` passes — through the gate, not `nimble` bare
+- [ ] `build/unigate testAll` passes
 - [ ] `build/unigate lint` and `build/unigate checkVGraph` pass
 - [ ] C ABI touched → `include/UniBarCode.h` updated in the same commit
 - [ ] Public API touched → `book/index.nim` still builds and describes it

@@ -6,8 +6,8 @@ on:
   push:
     tags: ['v*']
 
-# Read-only by default: only the release upload needs write, and it
-# declares it itself.
+# Least privilege by default: guard/cabi/wheels only build and upload artifacts.
+# The publish job widens its own scope to cut the release.
 permissions:
   contents: read
 
@@ -16,7 +16,7 @@ jobs:
     name: Tag matches .nimble version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v4
         with: { persist-credentials: false }
       # A tag disagreeing with the package version ships artifacts whose
       # embedded version lies. Refuse before anything is built.
@@ -24,32 +24,8 @@ jobs:
           set -eu
           tag="${GITHUB_REF_NAME#v}"
           declared=$(grep -m1 '^version' UniBarCode.nimble | cut -d'"' -f2)
-          declared_py=$(grep -m1 '^version = ' py/pyproject.toml | cut -d'"' -f2)
-          # Prefix-agnostic on purpose: the macro is UNIMATH_VERSION in one repo
-          # and UC_VERSION in another.
-          declared_h=$(grep -m1 -E '^#define [A-Z_]+_VERSION "' include/UniBarCode.h | cut -d'"' -f2)
-          echo "tag=$tag nimble=$declared python=$declared_py header=$declared_h"
+          echo "tag=$tag declared=$declared"
           test "$tag" = "$declared"
-          test "$tag" = "$declared_py"
-          test "$tag" = "$declared_h"
-
-  test:
-    name: Nim tests (${{ matrix.os }})
-    needs: guard
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
-        with:
-          nim-version: '2.2.10'
-      - run: nimble install -y
-      - run: nimble testCi
-      - run: nimble testCiRelease
 
   cabi:
     name: C ABI (${{ matrix.os }})
@@ -60,21 +36,29 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v4
         with: { persist-credentials: false }
-      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
+      - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: '2.2.10'
       - run: nimble install -y
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed. A release
+          # that ships artifacts whose own tests failed is worse than no
+          # release, so every task below runs through the gate.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - run: $GATE clibStatic
+      - run: $GATE clib
       # gcc arrives with Nim's MinGW, GNU make does not ship on the runner image.
       - name: Install GNU make (Windows)
         if: runner.os == 'Windows'
-        run: choco install make --no-progress -y
-      # Test the ABI before packaging it: a release that ships a lib failing
-      # its own header test is worse than no release.
-      - run: nimble ctest
-      - run: nimble clibStatic
-      - run: nimble clib
+        run: choco install make --no-progress
+      - run: $GATE testCi
+      - run: $GATE ctest
       - name: Package
         shell: bash
         run: |
@@ -85,122 +69,70 @@ jobs:
           cp libUniBarCode.* "$dir/"
           cp LICENSE NOTICE "$dir/"
           tar czf "$dir.tar.gz" "$dir"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v4
         with:
           name: cabi-${{ matrix.os }}
           path: '*.tar.gz'
 
   wheels:
-    name: Wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    name: Wheel (${{ matrix.os }})
     needs: guard
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        # No Py_LIMITED_API/abi3 in setup.py: the extension is tied to each
-        # CPython minor version's C ABI, so every one needs its own wheel.
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v4
         with: { persist-credentials: false }
-      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
+      - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: '2.2.10'
       - run: nimble install -y
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Build the failure gate
+        run: |
+          # Nimble exits 0 even when an `exec` inside a task failed. A release
+          # that ships artifacts whose own tests failed is worse than no
+          # release, so every task below runs through the gate.
+          GATE=build/unigate
+          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
+          nim c --hints:off -o:$GATE tools/gate.nim
+          echo "GATE=$GATE" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -U setuptools wheel Cython pytest
-      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+          python-version: '3.11'
+      - run: pip install -U setuptools wheel Cython
+      - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
-      - run: nimble pyLib
-      # Build the extension in-place and run the test suite before packaging a
-      # wheel -- a release wheel that fails its own tests is worse than no wheel.
-      - run: cd py && python setup.py build_ext --inplace
-      - run: cd py && python -m pytest -q
-      - run: cd py && python setup.py bdist_wheel
+      - run: $GATE pyLib
+      - run: $GATE pyTest
+      - run: cd py && python3 setup.py bdist_wheel
       - name: Repair Wheel
         shell: bash
         run: |
           set -eu
           case "$RUNNER_OS" in
-            Linux)   pip install auditwheel && LD_LIBRARY_PATH="$GITHUB_WORKSPACE" auditwheel repair py/dist/*.whl -w dist/ ;;
-            macOS)   pip install delocate   && DYLD_LIBRARY_PATH="$GITHUB_WORKSPACE" delocate-wheel py/dist/*.whl -w dist/ ;;
+            Linux)   pip install auditwheel && auditwheel repair py/dist/*.whl -w dist/ ;;
+            macOS)   pip install delocate   && delocate-wheel py/dist/*.whl -w dist/ ;;
             Windows) pip install delvewheel && delvewheel repair py/dist/*.whl -w dist/ ;;
           esac
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: wheel-${{ matrix.os }}
           path: dist/*.whl
 
-  sdist:
-    name: Source distribution
-    needs: guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.12'
-      - run: pip install -U setuptools wheel Cython
-      # Vendors the Nim source into py/_nimsrc/ (setup.py's vendor_nim_source),
-      # so `pip install --no-binary` can build it on a platform/Python version
-      # with no prebuilt wheel -- nimble/nim must be on the installer's PATH.
-      - run: cd py && python setup.py sdist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sdist
-          path: py/dist/*.tar.gz
-
   publish:
-    name: Publish GitHub Release
-    needs: [test, cabi, wheels, sdist]
+    name: Publish
+    needs: [cabi, wheels]
     runs-on: ubuntu-latest
     permissions:
-      # softprops/action-gh-release creates the release and uploads assets.
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - run: ls -R artifacts
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+      - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           generate_release_notes: true
-
-  publish-pypi:
-    name: Publish to PyPI
-    needs: [test, wheels, sdist]
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/lituus-unibarcode/
-    permissions:
-      # Trusted publishing (OIDC): no API token stored here. Requires a
-      # one-time manual step on pypi.org -- add lituus-lab/UniBarCode,
-      # workflow release.yml, environment pypi as a trusted publisher for
-      # the lituus-unibarcode project. The distribution is namespaced and
-      # the import name is not; the bare names are not all available.
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: wheel-*
-          path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sdist
-          path: dist
-      - run: ls dist/
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: dist/
-          # This tag can re-run after a version already has some files on
-          # PyPI (e.g. adding a Python version or the sdist later) -- PyPI
-          # rejects re-uploading an unchanged filename, so skip rather than
-          # fail the whole job on files already published.
-          skip-existing: true

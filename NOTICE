@@ -15,5 +15,13 @@ limitations under the License.
 
 ----------------------------------------------------------------------------
 
-Depends on NimContracts (github.com/lbartoletti/NimContracts), MIT-licensed,
-tracked at its main branch HEAD.
+Bundles a pinned dependency on NimContracts
+(github.com/lbartoletti/NimContracts @ 881d6d1ac762b8179fa46da567e8fd41ff747d06),
+MIT-licensed.
+
+The symbology encoders are original code against public documented standards:
+ISO/IEC 15438 (PDF417), ISO/IEC 18004 (QR Code), ISO/IEC 16022 (Data Matrix),
+ISO/IEC 24778 (Aztec), ISO/IEC 16390 (ITF), ISO/IEC 15417 (Code 128),
+ISO/IEC 16388 (Code 39), and GS1 for EAN/UPC. Where a table or algorithm was
+verified against a permissive reference implementation, that source is credited
+in the relevant file: zxing-cpp (Apache-2.0) and aztec_code_generator (MIT).
