@@ -65,3 +65,9 @@ lituus-theme/
 
 # nimibook's build output. `docs` copies it to pages/, which is what ships.
 book/__site/
+
+# What the C demo writes when it runs. Tracked before, so every change to the
+# renderer showed up as a binary diff nobody reviews; no other repository in
+# the family tracks its example output.
+examples/c/demo.png
+examples/c/demo.svg
