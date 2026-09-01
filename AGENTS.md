@@ -5,26 +5,21 @@
 ## Build & gates
 
 ```bash
+# Through the gate, not `nimble <task>`: nimble exits 0 even when an `exec`
+# inside a task fails, so its exit code says only that nimble ran.
 nimble install -y
-nim c --hints:off -o:build/unigate tools/gate.nim   # the failure gate, once
-
-build/unigate testAll    # Nim debug + release + C ABI
-build/unigate pyTest     # Cython + pytest (needs libUniBarCode.so)
+build/unigate testAll      # Nim debug + release + C ABI
+build/unigate unibarcode   # CLI: encode a payload to PNG/SVG
+build/unigate pyTest       # Cython + pytest (needs the built libUniBarCode shared lib)
 build/unigate example
-build/unigate coverage   # gcov + lcov -> coverage/ (needs lcov; linux/macOS)
-build/unigate docs       # nimib book + API reference -> pages/ (needs nimib)
-build/unigate canary     # must fail
+build/unigate coverage     # gcov + lcov -> coverage/ (needs lcov; linux/macOS)
+build/unigate docs         # nimib book + API reference -> pages/ (needs nimib)
 ```
-
-Never `nimble <task>` bare where the answer matters: nimble 0.22 exits 0 even
-when an `exec` inside the task failed. The gate reads the task's own success
-marker instead, which is the only evidence it ran to its last line.
 
 `nimble docs` needs a complete Nim distribution: `--project` builds `dochack`,
 which Homebrew's `nim` omits (no `tools/`). choosenim and the CI action ship it.
 
-CI: Nim, C ABI and Python each on ubuntu/macOS/Windows; lint, docs and
-coverage on ubuntu; a canary job that must fail; `all-green` over all of them.
+CI: 3-OS Nim matrix + C ABI (linux/macOS) + Python.
 
 ## Conventions
 
@@ -36,19 +31,22 @@ coverage on ubuntu; a canary job that must fail; `all-green` over all of them.
 - C ABI: hand-written `include/UniBarCode.h` kept in sync with
   `src/UniBarCode/c_api.nim`; `tests/c` links the header against the lib.
   Built `--app:staticlib`/`--app:lib --noMain --mm:arc -d:release`.
-- C symbols `unibarcode_*` — the library's own name in lower case, not a
-  short token: a binary linking several engines holds them in one namespace.
-  Lib `libUniBarCode`; header `UniBarCode.h`.
+- C symbols `ubc_*` (prefix `ubc_`); lib `libUniBarCode`; header `UniBarCode.h`.
 - `book/index.nim` is nimib: its code blocks are compiled and run at docs build,
   so prose that outlives its API breaks the build. `py/notebooks/quickstart.ipynb`
   plays the same role for Python and renders natively on GitHub.
 - End covered sources with a blank line. Nim maps a trailing statement one line
-  past EOF; without that line lcov aborts on `range`/`unmapped`, and `coverage`
-  keeps those fatal so the failure stays visible. It ignores exactly one error,
-  `mismatch`, which lcov 2.0 raises on a NimContracts-generated destructor and
-  lcov 2.5 does not — a compiler-generated symbol, not a line of the library.
+  past EOF; without that line lcov aborts on `range`/`unmapped`, and `nimble
+  coverage` deliberately suppresses no error so the failure stays visible.
 
 ## Scope
 
-GitHub template repository for the `Uni*` family: "Use this template" starts an
-engine with the layout, the gates and the CI in place. Apache-2.0, DCO.
+UniBarCode is a layer-4 terminal engine in the lituus-lab Uni* family:
+multi-symbology barcode encoding (EAN-13/8, UPC-A, UPC-E, EAN-2/5 add-ons,
+Code 39, Code 128, GS1-128, ITF, QR Code, Micro QR, Data Matrix, PDF417,
+Aztec) with SVG and PNG (raster) backends rendered through UniVector +
+UniImage + UniColor. No font file is loaded — HRI is SVG `<text>`, and the
+raster backend draws bars/cells only. Clean-room from public standards
+(ISO/IEC, GS1, W3C SVG); no pixie code or references anywhere. Apache-2.0,
+DCO. The `ubc_*` C ABI and Python binding mirror the family pattern
+(UniGlyph `ugly_`, UniVector `uv_`).

@@ -1,10 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 lituus-lab
 ## The table of contents, and the two settings that decide the theme.
-##
-## Four chapters, because the standard asks a chapter for ten slots and a
-## single page cannot show them separately. What a reader takes from this book
-## is not fibonacci; it is the shape.
 import std/tables
 import nimibook
 # `from ... import` and not a plain import: the theme module re-exports nimib
@@ -14,12 +10,15 @@ from lituus_theme import faviconTag
 
 var book = initBookWithToc:
   entry("UniBarCode", "index.nim")
-  entry("Fibonacci", "fibonacci.nim")
-  entry("Contracts", "contracts.nim")
-  entry("Surfaces", "surfaces.nim")
+  entry("Clean-room", "cleanroom.nim")
+  entry("Encoding", "encode.nim")
+  entry("Rendering", "render.nim")
+  entry("C and Python", "surfaces.nim")
 
 book.title = "UniBarCode"
-book.description = "The scaffold every lituus-lab Uni* engine starts from."
+book.description =
+  "Fifteen barcode symbologies, encoded clean-room from the published " &
+  "standards and rendered to SVG or raster."
 
 # The two BookConfig fields that select a theme. nimibook's inline script picks
 # between them with `prefers-color-scheme`, and localStorage overrides.
