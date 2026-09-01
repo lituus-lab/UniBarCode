@@ -1,0 +1,67 @@
+# build artifacts
+build/
+# Anchored: this is the build output dir, and unanchored `bin/` would also
+# swallow any nested bin/ a subdirectory legitimately tracks.
+/bin/
+libUniBarCode.so
+libUniBarCode.so.*
+libUniBarCode.dylib
+libUniBarCode.a
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.so.*
+*.dylib
+*.a
+*.lib
+
+# coverage
+coverage/
+lcov.info
+
+# nim cache
+nimcache/
+rnimcache/
+dnimcache/
+
+# docs output
+pages/
+docs/
+*.html
+nimdoc.out.css
+
+# python binding artifacts (sources tracked; generated + bundled lib not)
+py/unibarcode/_core.c
+py/unibarcode/*.so
+py/unibarcode/libUniBarCode.so
+py/dist/
+py/build/
+py/*.egg-info/
+py/**/__pycache__/
+py/.pytest_cache/
+# vendored by setup.py (vendor_nim_source) right before `sdist` packages
+# files -- shipped inside the sdist tarball, never tracked here
+py/_nimsrc/
+
+# c test/example binaries
+tests/c/test_unibarcode
+examples/c/demo
+
+# os / editor
+.DS_Store
+*~
+.*.swp
+*.dSYM
+
+*.log
+*.core
+actionlint
+
+# A relative --path into a sibling checkout makes nimble mirror the directory
+# here when it resolves. The theme is a nimble dependency, not a subdirectory.
+lituus-theme/
+
+# nimibook's build output. `docs` copies it to pages/, which is what ships.
+book/__site/
