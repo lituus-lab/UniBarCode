@@ -6,4 +6,4 @@
 ## anything -- which is why the proof is a test and not a comment.
 import UniBarCode
 
-echo fibonacci(theCanaryIsSupposedToBeUndefined)
+echo theCanaryIsSupposedToBeUndefined
