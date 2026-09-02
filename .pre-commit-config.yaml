@@ -44,13 +44,13 @@ repos:
         name: nimble lint (nimpretty)
         # Through the gate: `nimble lint` exits 0 even when nimpretty found
         # something, so the hook would pass on a file it should have stopped.
-        entry: tools/hooks/gate.sh lint
+        entry: tools/hooks/gated.sh lint
         language: system
         files: \.nim$
         pass_filenames: false
       - id: nim-vgraph
         name: nimble checkVGraph
-        entry: tools/hooks/gate.sh checkVGraph
+        entry: tools/hooks/gated.sh checkVGraph
         language: system
         files: (\.nim|vgraph\.cfg|config\.nims|UniBarCode\.nimble)$
         pass_filenames: false
