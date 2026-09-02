@@ -6,133 +6,20 @@ on:
   push:
     tags: ['v*']
 
-# Least privilege by default: guard/cabi/wheels only build and upload artifacts.
-# The publish job widens its own scope to cut the release.
 permissions:
   contents: read
 
 jobs:
-  guard:
-    name: Tag matches .nimble version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with: { persist-credentials: false }
-      # A tag disagreeing with the package version ships artifacts whose
-      # embedded version lies. Refuse before anything is built.
-      - run: |
-          set -eu
-          tag="${GITHUB_REF_NAME#v}"
-          declared=$(grep -m1 '^version' UniBarCode.nimble | cut -d'"' -f2)
-          echo "tag=$tag declared=$declared"
-          test "$tag" = "$declared"
-
-  cabi:
-    name: C ABI (${{ matrix.os }})
-    needs: guard
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v7
-        with: { persist-credentials: false }
-      - uses: jiro4989/setup-nim-action@v2
-        with:
-          nim-version: '2.2.10'
-      - run: nimble install -y
-      - name: Build the failure gate
-        run: |
-          # Nimble exits 0 even when an `exec` inside a task failed. A release
-          # that ships artifacts whose own tests failed is worse than no
-          # release, so every task below runs through the gate.
-          GATE=build/unigate
-          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
-          nim c --hints:off -o:$GATE tools/gate.nim
-          echo "GATE=$GATE" >> "$GITHUB_ENV"
-      - run: $GATE clibStatic
-      - run: $GATE clib
-      # gcc arrives with Nim's MinGW, GNU make does not ship on the runner image.
-      - name: Install GNU make (Windows)
-        if: runner.os == 'Windows'
-        run: choco install make --no-progress
-      - run: $GATE testCi
-      - run: $GATE ctest
-      - name: Package
-        shell: bash
-        run: |
-          set -eu
-          dir="UniBarCode-${GITHUB_REF_NAME}-${{ matrix.os }}"
-          mkdir -p "$dir/include"
-          cp include/UniBarCode.h "$dir/include/"
-          cp libUniBarCode.* "$dir/"
-          cp LICENSE NOTICE "$dir/"
-          tar czf "$dir.tar.gz" "$dir"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: cabi-${{ matrix.os }}
-          path: '*.tar.gz'
-
-  wheels:
-    name: Wheel (${{ matrix.os }})
-    needs: guard
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v7
-        with: { persist-credentials: false }
-      - uses: jiro4989/setup-nim-action@v2
-        with:
-          nim-version: '2.2.10'
-      - run: nimble install -y
-      - name: Build the failure gate
-        run: |
-          # Nimble exits 0 even when an `exec` inside a task failed. A release
-          # that ships artifacts whose own tests failed is worse than no
-          # release, so every task below runs through the gate.
-          GATE=build/unigate
-          [ "$RUNNER_OS" = Windows ] && GATE=build/unigate.exe
-          nim c --hints:off -o:$GATE tools/gate.nim
-          echo "GATE=$GATE" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-      - run: pip install -U setuptools wheel Cython
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-      - run: $GATE pyLib
-      - run: $GATE pyTest
-      - run: cd py && python3 setup.py bdist_wheel
-      - name: Repair Wheel
-        shell: bash
-        run: |
-          set -eu
-          case "$RUNNER_OS" in
-            Linux)   pip install auditwheel && auditwheel repair py/dist/*.whl -w dist/ ;;
-            macOS)   pip install delocate   && delocate-wheel py/dist/*.whl -w dist/ ;;
-            Windows) pip install delvewheel && delvewheel repair py/dist/*.whl -w dist/ ;;
-          esac
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wheel-${{ matrix.os }}
-          path: dist/*.whl
-
-  publish:
-    name: Publish
-    needs: [cabi, wheels]
-    runs-on: ubuntu-latest
+  release:
+    # The release every Uni* engine runs, held once in lituus-lab/.github
+    # rather than copied per repo. Pinned by commit, like every other
+    # dependency the family declares.
+    uses: lituus-lab/.github/.github/workflows/uni-nim-release.yml@48140db006ceb8b317be066e8f46f6e185f31a0f
     permissions:
+      # A called workflow cannot obtain more than the calling job grants:
+      # contents to create the release, id-token for PyPI trusted publishing.
       contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-      - run: ls -R artifacts
-      - uses: softprops/action-gh-release@v3
-        with:
-          files: artifacts/**/*
-          generate_release_notes: true
+      id-token: write
+    with:
+      library: UniBarCode
+      module: unibarcode
