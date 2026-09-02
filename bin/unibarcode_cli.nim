@@ -112,11 +112,13 @@ proc main() =
     elif a.startsWith("--addon=") or a == "--addon":
       addonPayload = optArg(args, i, "addon")
     elif a.startsWith("--module-size=") or a == "--module-size":
-      opts.moduleSize = parseFloatArg("--module-size", optArg(args, i, "module-size"))
+      opts.moduleSize = parseFloatArg("--module-size", optArg(args, i,
+          "module-size"))
     elif a.startsWith("--bar-height=") or a == "--bar-height":
       opts.barHeight = parseFloatArg("--bar-height", optArg(args, i, "bar-height"))
     elif a.startsWith("--guard-height=") or a == "--guard-height":
-      opts.guardHeight = parseFloatArg("--guard-height", optArg(args, i, "guard-height"))
+      opts.guardHeight = parseFloatArg("--guard-height", optArg(args, i,
+          "guard-height"))
     elif a.startsWith("--quiet-zone=") or a == "--quiet-zone":
       opts.quietZone = parseFloatArg("--quiet-zone", optArg(args, i, "quiet-zone"))
     elif a == "--no-hri": opts.showHri = false
