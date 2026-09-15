@@ -70,3 +70,7 @@ book/__site/
 # the family tracks its example output.
 examples/c/demo.png
 examples/c/demo.svg
+# the coverage build of the C consumer, and the gcov pair make leaves beside it
+tests/c/test_capi_cov
+tests/c/*.gcda
+tests/c/*.gcno
